@@ -19,6 +19,7 @@ int main()
     
     std::cout << "1 - Запросить данные абонента по номеру телефона\n";
     std::cout << "2 - Запросить данные всех абонентов онлайн\n";
+    std::cout << "ESC - Выйти\n";
     string phone_num;
     char c = '0';
     int status = -1;
