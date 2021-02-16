@@ -8,9 +8,11 @@ using namespace std;
 constexpr char PhoneNumber[] = "PhoneNumber";
 constexpr int StatusOk = 200;
 constexpr char EndLineChar = '\n';
+constexpr char MoreData[] = "MoreData";
+constexpr char NeedToWait[] = "NeedToWait";
 
 int main()
-{
+{  
     SetConsoleCP(1251);
     SetConsoleOutputCP(1251);
     
@@ -26,6 +28,7 @@ int main()
     string body;
     std::chrono::steady_clock::time_point begin;
     std::chrono::steady_clock::time_point end;
+
     while (true)
     {
         c = _getch();
@@ -40,35 +43,76 @@ int main()
             auto res = cli.Get("/GetFio", p);
             end = std::chrono::steady_clock::now();
             
-            status = res->status;
-            if (status == StatusOk)
+            if (res)
             {
-                cout << res->body << EndLineChar;
-                cout << "Время выполнения запроса = " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "ms" << EndLineChar;
+                status = res->status;
+                if (status == StatusOk)
+                {
+                    cout << res->body << EndLineChar;
+                    cout << "Время выполнения запроса = " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "ms" << EndLineChar;
 
+                }
+                else
+                {
+                    std::cout << "Result status = " << status << EndLineChar;
+                }
             }
             else
             {
-                std::cout << "Result status = " << status << EndLineChar;
+                std::cout << "Неудачный запрос. Ошибка чтения" << EndLineChar;
+                break;
             }
         }
         else if (c == '2')
         {
+            string result;
+            bool stat_ = true;
             begin = std::chrono::steady_clock::now();
-            auto res = cli.Get("/GetOnline");
+            while (true)
+            {
+                auto res = cli.Get("/GetOnline");
+                if (res)
+                {
+                    status = res->status;
+                    body = res->body;
+                    if (status == StatusOk)
+                    {
+                        result += res->body;
+                        cout << "Получено данных = " << res->body.length() << " байт\n";
+                        httplib::Headers h = res->headers;
+                        if (h.find(NeedToWait) != h.end())
+                        {
+                            stat_ = false;
+                            std::cout << body << EndLineChar;
+                            break;
+                        } 
+                        else if (h.find(MoreData) == h.end())
+                        {
+                            break;
+                        }
+                    }
+                    else
+                    {
+                        stat_ = false;
+                        std::cout << "Неудачный запрос. Статус = " << status << EndLineChar;
+                        break;
+                    }
+                }
+                else
+                {
+                    stat_ = false;
+                    std::cout << "Неудачный запрос. Ошибка чтения"<< EndLineChar;
+                    break;
+                }
+            } 
             end = std::chrono::steady_clock::now();
 
-            status = res->status;
-            body = res->body;
-            if (status == StatusOk)
+            if (stat_)
             {
                 cout << "Запрос выполнен успешно, но результат не выведен в консоль (закоментировано) тк это займет много времени" << EndLineChar;
-                //cout << res->body << EndLineChar;
+                cout << "Получено всего данных = " << result.length() << " байт\n";
                 cout << "Время выполнения запроса = " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "ms" << EndLineChar;
-            }
-            else
-            {
-                std::cout << "Неудачный запрос. Статус = " << status << EndLineChar;
+                //cout << res->body << EndLineChar;
             }
         }
         else if (c == 27)

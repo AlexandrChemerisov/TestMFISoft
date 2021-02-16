@@ -1,24 +1,14 @@
 #include "CSVFile.h"
-#include <iostream>
 #include <cstdio>
 #include <vector>
-#include <chrono>
-#include <sstream>
+#include <thread>
+#include <random>
 
 CSVFile::CSVFile(const string& name)
 {
-	if (name.empty())
+	if (!name.empty())
 	{
-		cout << "Не задано имя файла";
-	}
-	else
-	{
-		FileCSV.exceptions(std::ios::failbit | std::ios::badbit);
-		FileCSV.open(name, std::fstream::in | std::fstream::out | std::fstream::app);
-		if (!FileCSV.is_open())
-		{
-			cout << "Не удалось открыть файл";
-		}
+		OpenFile(name);
 	}
 }
 
@@ -31,60 +21,63 @@ CSVFile::~CSVFile()
 	}
 }
 
+bool CSVFile::OpenFile(const string& name)
+{
+	if (name.empty())
+	{
+		cout << "Не задано имя файла";
+		return false;
+	}
+	else
+	{
+		FileCSV.exceptions(std::ios::failbit | std::ios::badbit);
+		FileCSV.open(name, std::fstream::in | std::fstream::out | std::fstream::app);
+		if (!FileCSV.is_open())
+		{
+			cout << "Не удалось открыть файл";
+			return false;
+		}
+	}
+	return true;
+}
+
 void CSVFile::AddLine(const string& line)
 {
 	if (FileCSV.is_open())
 		FileCSV << line;
 }
 
-const string& CSVFile::ReadLine()
+void CSVFile::ReadAll(const string& name, shared_ptr<phone_data> data_maps)
 {
-	if (FileCSV.is_open() && !FileCSV.eof())
-	{
-		// Не достигнут конец файла
-		FileCSV >> Line;
-		return Line;
-	}
-	else
-	{
-		Line.clear();
-		return Line;
-	}
-}
-
-bool CSVFile::ReadAll(unordered_map<string, string>& online, unordered_map<string, string>& offline)
-{
-	if (FileCSV.is_open() && !FileCSV.eof())
-	{
-		cout << "Начало чтения файла...\n";
-
-		// Не достигнут конец файла
-		FileCSV.seekg(0, FileCSV.end);
-		uint64_t file_size = FileCSV.tellg();
-		FileCSV.seekg(0, FileCSV.beg);
-
-		std::string str;
-		str.reserve(file_size + 1);
-
-		string s;
-		std::stringstream ss;
-		ss << FileCSV.rdbuf();
+	thread loading_file_thread = thread([&](const string& name) {
+		shared_ptr<fstream> file(make_shared<fstream>());
+		file->exceptions(std::ios::failbit | std::ios::badbit);
+		file->open(name, std::fstream::in | std::fstream::out | std::fstream::app);
+		if (!file->is_open())
+		{
+			cout << "Не удалось открыть файл по адресу " << name;
+			return;
+		}
+		cout << "Начало чтения файла..." << endl;
 
 		// Получим указатель на связанный буферный объект
-		std::filebuf* fbuf = FileCSV.rdbuf();
+		std::filebuf* fbuf = file->rdbuf();
 		// получим размер файла/буффера в байтах
-		std::size_t size = fbuf->pubseekoff(0, FileCSV.end, FileCSV.in);
-		fbuf->pubseekpos(0, FileCSV.in);
+		std::size_t size = fbuf->pubseekoff(0, file->end, file->in);
+		fbuf->pubseekpos(0, file->in);
 		// Выделим память для хранения данных файла
 		vector<char> buffer(size);
 		// Считаем данные из файла в буффер
 		fbuf->sgetn(&buffer[0], size);
-		
+
 		size_t start = 0;
 		int col_num = 0;
-		string phone_number;
-		string fio;
+		size_t phone_start = 0;
+		size_t phone_sz = 0;
+		size_t fio_start = 0;
+		size_t fio_sz = 0;
 		size_t sz = 0;
+
 		auto begin = std::chrono::steady_clock::now();
 		for (size_t i = 0; i < size; ++i)
 		{
@@ -94,11 +87,13 @@ bool CSVFile::ReadAll(unordered_map<string, string>& online, unordered_map<strin
 				sz = i - start;
 				if (0 == col_num)
 				{
-					phone_number.assign(&buffer[start], sz);
+					phone_start = start;
+					phone_sz = sz;
 				}
 				else if (1 == col_num)
 				{
-					fio.assign(&buffer[start], sz);
+					fio_start = start;
+					fio_sz = sz;
 				}
 				start = ++i;
 				++col_num;
@@ -113,24 +108,84 @@ bool CSVFile::ReadAll(unordered_map<string, string>& online, unordered_map<strin
 				sz = i - start;
 				if (OfflineChar == buffer[i - 1])
 				{
-					offline.insert(std::make_pair(phone_number, fio));
+					data_maps->OfflineMap.emplace(std::make_pair(string(&buffer[phone_start], phone_sz), string(&buffer[fio_start], fio_sz)));
 				}
 				else
 				{
-					online.insert(std::make_pair(phone_number, fio));
+					data_maps->OnlineMap.emplace(std::make_pair(string(&buffer[phone_start], phone_sz), string(&buffer[fio_start], fio_sz)));
 				}
+				
 				start = ++i;
 				col_num = 0;
 			}
-
 		}
-		
+
 		auto end = std::chrono::steady_clock::now();
 		auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - begin);
 		cout << "Время чтения файла = " << elapsed_ms.count() << "ms" << EndLineChar;
+		data_maps->IsFileRead.store(true);
+		file->close();
+		}, name
+	);
 
-		return true;
-	}
-	return false;
+	loading_file_thread.detach();
 }
 
+bool CSVFile::CreateNewFile(const string& file_name)
+{
+	if (!OpenFile(file_name))
+		return false;
+
+	cout << "Начало генерации файла...\n";
+
+	std::random_device rd;
+	std::mt19937 mersenne(rd()); // инициализируем Вихрь Мерсенна случайным стартовым числом 
+	size_t last_length = 0;
+	string str;// 
+	string num_s;
+	size_t str_length;
+	int val;
+	string line;
+	string name;
+	stringstream ss;
+
+	auto write_to_file = [&]() {
+		line = ss.str();
+		AddLine(line);
+
+		ss.str(""); // очищаем буфер
+		ss.clear(); // сбрасываем все флаги ошибок
+	};
+
+	auto begin = std::chrono::steady_clock::now();
+	for (uint64_t i = 1; i <= LineSize; ++i)
+	{
+		num_s = std::to_string(i);
+		str_length = num_s.length();
+		if (last_length != str_length)
+		{
+			str = string(WordSize - str_length, FillChar);
+			last_length = str_length;
+		}
+		name = str + num_s;
+
+		val = mersenne() % Mod;
+
+		// Используем строковый поток, тк операции составления строк происходят быстрее чем со строкой + не нужно переводить отдельно int в строку
+		ss << name << Separator << name << " " << name << " " << name << Separator << val << EndLineChar;
+
+		// Будем писать в файл не каждую строку а по WriteLineSize (по 1 гораздо медленнее, реже чем WriteLineSize прироста нет)
+		if (!(i % WriteLineSize))
+		{
+			write_to_file();
+		}
+	}
+	write_to_file();
+	Flush();
+	auto end = std::chrono::steady_clock::now();
+	auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - begin);
+
+	cout << "Время генерации файла = " << elapsed_ms.count() << "ms";
+
+	return true;
+}

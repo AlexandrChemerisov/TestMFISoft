@@ -1,93 +1,143 @@
-﻿#include <random>
-#include <sstream>
-#include <chrono>
-#include <conio.h>
+﻿#include <conio.h>
 #include "CSVFile.h"
 #include "httplib.h"
-constexpr char FillChar = '0';
-constexpr size_t WordSize = 8;
-constexpr size_t LineSize = 25000000;
-constexpr size_t WriteLineSize = 100;
-constexpr size_t Mod = 2;
-constexpr char PhoneNumberNotFound[] = "Номер телефона не найден";//"Phone number not found!";
-constexpr char NoActiveSubscribers[] = "Нет активных абонентов";//"No active subscribers!";
+
+constexpr char PhoneNumberNotFound[] = "Номер телефона не найден";
+constexpr char NoActiveSubscribers[] = "Нет активных абонентов";
 constexpr char Host[] = "localhost";
 constexpr int Port = 8080;
-constexpr char FileName[] = "test.csv";//"Phone number not found!";
+constexpr char FileName[] = "test.csv";
+constexpr char MoreData[] = "MoreData"; // Заголовок указывающий что не все еще данные переданы. Можно так же указывать размер или идентификатор клиента.
+constexpr char NeedToWait[] = "NeedToWait";
+constexpr char FileNotLoad[] = "Данные незагружены. Попробуйте позже.";
+constexpr size_t MaxLineCounter = 100000; // Отправлять по http строк в пакете
 
-void createCSVFile(const string& file_name)
+int main(int argc, char* argv[])
 {
+	SetConsoleCP(1251);
+	SetConsoleOutputCP(1251);
+	
+	std::cout << "1 - Генерировать файл\n";
+	std::cout << "2 - Загрузить существующий файл и запустить http сервер\n";
+	std::cout << "ESC - Выйти\n";
+	
 	try
 	{
-		CSVFile csv_file(file_name);
-		if (!csv_file.IsOpen())
-			return;
+		CSVFile csv_file;
+		
+		char c = _getch();
 
-		cout << "Начало генерации файла...\n";
-
-		std::random_device rd;
-		std::mt19937 mersenne(rd()); // инициализируем Вихрь Мерсенна случайным стартовым числом 
-
-		size_t last_length = 0;
-		string str;// 
-		string num_s;
-		size_t str_length;
-		int val;
-		string line;
-		string name;
-		stringstream ss;
-
-		auto begin = std::chrono::steady_clock::now();
-		for (uint64_t i = 1; i < LineSize; ++i)
+		size_t data_size = 0;
+		if (c == '1')
 		{
-			num_s = std::to_string(i);
-			str_length = num_s.length();
-			if (last_length != str_length)
-			{
-				str = string(WordSize - str_length, FillChar);
-				last_length = str_length;
-			}
-			name = str + num_s;
-
-			val = mersenne() % Mod;
-
-			// Используем строковый поток, тк операции составления строк происходят быстрее чем со строкой + не нужно переводить отдельно int в строку
-			ss << name << Separator << name << " " << name << " " << name << Separator << val << EndLineChar;
-
-			// Будем писать в файл не каждую строку а по WriteLineSize (по 1 гораздо медленнее, реже чем WriteLineSize прироста нет)
-			if (!(i % WriteLineSize))
-			{
-				line = ss.str();
-				csv_file.AddLine(line);
-
-				ss.str(""); // очищаем буфер
-				ss.clear(); // сбрасываем все флаги ошибок
-			}
+			if (!csv_file.CreateNewFile(FileName))
+				cout << "Ошибка генерации файла\n";
 		}
-		csv_file.Flush();
-		auto end = std::chrono::steady_clock::now();
-		auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - begin);
+		else if (c == '2')
+		{
+			shared_ptr<phone_data> phone_maps(make_shared<phone_data>());
 
-		cout << "Время генерации файла = " << elapsed_ms.count() << "ms";
-	}
-	catch (std::ifstream::failure e)
-	{
-		error_code cd = e.code();
-		std::cerr << e.what() << '\n';
-		std::cerr << "Exception opening/reading/closing file\n";
-	}
-	catch (...)
-	{
-		std::cerr << "Some other error\n";
-	}
-}
+			CSVFile::ReadAll(FileName, phone_maps);
 
-bool readFile(const string& file_name, unordered_map<string, string>& online, unordered_map<string, string>& offline)
-{
-	try
-	{
-		CSVFile csv_file(file_name);
-		return csv_file.ReadAll(online, offline);
+			// HTTP
+			httplib::Server svr;
+
+			svr.Get("/GetFio", [&](const httplib::Request& req, httplib::Response& res) {
+				auto begin = std::chrono::steady_clock::now();
+
+				if (phone_maps->IsFileRead.load())
+				{
+					string content(PhoneNumberNotFound);
+					auto it = req.headers.find("PhoneNumber");
+					if (it != req.headers.end())
+					{
+						string phone = it->second;
+						auto phone_it = phone_maps->OnlineMap.find(phone);
+						bool phone_is_find = false;
+						if (phone_it != phone_maps->OnlineMap.end())
+						{
+							content = phone_it->second + Separator + OnlineChar;
+						}
+						else
+						{
+							phone_it = phone_maps->OfflineMap.find(phone);
+							if (phone_it != phone_maps->OfflineMap.end())
+							{
+								content = phone_it->second + Separator + OfflineChar;
+							}
+						}
+					}
+					res.set_content(content, "text/plain");
+				}
+				else
+				{
+					res.set_header(NeedToWait, NeedToWait);
+					res.set_content(FileNotLoad, "text/plain");
+				}
+
+				auto end = std::chrono::steady_clock::now();
+				cout << "Время обработки запроса = " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "ms" << EndLineChar;
+				});
+
+			phone_map::iterator last_it;
+			bool iter_init = false;
+
+			svr.Get("/GetOnline", [&](const httplib::Request&, httplib::Response& res) {
+				string content(NoActiveSubscribers);
+
+				if (phone_maps->IsFileRead.load())
+				{
+					if (!iter_init)
+					{
+						iter_init = true;
+						last_it = phone_maps->OnlineMap.begin();
+					}
+
+					if (!phone_maps->OnlineMap.empty() && last_it != phone_maps->OnlineMap.end())
+					{
+						int i = 1;
+						if (last_it != phone_maps->OnlineMap.begin())
+							++last_it;
+						content.clear();
+
+						std::stringstream ss;
+						for (; last_it != phone_maps->OnlineMap.end(); ++last_it)
+						{
+							ss << last_it->first << Separator << last_it->second << EndLineChar;
+							if (!(i % MaxLineCounter))
+							{
+								// Еще не все данные переданы
+								res.set_header(MoreData, &OnlineChar);
+								break;
+							}
+							++i;
+						}
+						content = ss.str();
+					}
+
+					if (last_it == phone_maps->OnlineMap.end())
+						last_it = phone_maps->OnlineMap.begin();
+
+					res.set_content(content, "text/plain");
+					data_size += content.length();
+					cout << "Передан пакет данных = " << content.length() << "байт" << EndLineChar;
+				}
+				else
+				{
+					res.set_header(NeedToWait, NeedToWait);
+					res.set_content(FileNotLoad, "text/plain");
+				}
+				});
+
+
+			cout << "Http server listen host = " << Host << " port = " << Port << endl;
+			svr.listen(Host, Port);
+
+		}
+		else if (c == 27)
+		{
+			return 0;
+		}
 	}
 	catch (std::ifstream::failure e)
 	{
@@ -98,93 +148,6 @@ bool readFile(const string& file_name, unordered_map<string, string>& online, un
 	catch (...)
 	{
 		std::cerr << "Some other error\n";
-	}
-	return false;
-}
-
-int main(int argc, char* argv[])
-{
-
-
-	SetConsoleCP(1251);
-	SetConsoleOutputCP(1251);
-	
-	std::cout << "1 - Генерировать файл\n";
-	std::cout << "2 - Загрузить существующий файл и запустить http сервер\n";
-	std::cout << "ESC - Выйти\n";
-	char c = _getch();
-
-	if (c == '1')
-	{
-		createCSVFile(FileName);
-	}
-	else if (c == '2')
-	{
-		unordered_map<string, string> online_map;
-		unordered_map<string, string> offline_map;
-		if (!readFile(FileName, online_map, offline_map))
-		{
-			return 1;
-		}
-
-		// HTTP
-		httplib::Server svr;
-
-		svr.Get("/GetFio", [&](const httplib::Request& req, httplib::Response& res) {
-			auto begin = std::chrono::steady_clock::now();
-			string content(PhoneNumberNotFound);
-			auto it = req.headers.find("PhoneNumber");
-			if (it != req.headers.end())
-			{
-				string phone = it->second;
-				auto phone_it = online_map.find(phone);
-				bool phone_is_find = false;
-				if (phone_it != online_map.end())
-				{
-					content = phone_it->second + Separator + OnlineChar;
-				}
-				else
-				{
-					phone_it = offline_map.find(phone);
-					if (phone_it != offline_map.end())
-					{
-						content = phone_it->second + Separator + OfflineChar;
-					}
-				}
-			}
-			res.set_content(content, "text/plain");
-			auto end = std::chrono::steady_clock::now();
-			cout << "Время обработки запроса = " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "ms" << EndLineChar;
-			});
-
-		svr.Get("/GetOnline", [&](const httplib::Request&, httplib::Response& res) {
-			auto begin = std::chrono::steady_clock::now();
-			string content(NoActiveSubscribers);
-			if (!online_map.empty())
-			{
-				std::stringstream ss;
-				for (auto it : online_map)
-				{
-					ss << it.first << Separator << it.second << EndLineChar;
-				}
-				content = ss.str();
-			}
-			res.set_content(content, "text/plain");
-			auto end = std::chrono::steady_clock::now();
-			cout << "Время обработки запроса = " << std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count() << "ms" << EndLineChar;
-			});
-
-		cout << "Http server listen host = " << Host << " port = " << Port << EndLineChar;
-		svr.listen(Host, Port);
-
-	}
-	else if (c == 27)
-	{
-		return 0;
-	}
-	else
-	{
-		std::cout << "Неверная команда\n";
 	}
 	
 	return 0;
