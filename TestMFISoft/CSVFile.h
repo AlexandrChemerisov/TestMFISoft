@@ -28,7 +28,6 @@ constexpr size_t LineSize = 25000000;
 constexpr size_t WriteLineSize = 100;
 constexpr size_t Mod = 2;
 
-
 class CSVFile
 {
 public:

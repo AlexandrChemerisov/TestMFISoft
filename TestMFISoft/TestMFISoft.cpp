@@ -23,13 +23,12 @@ int main(int argc, char* argv[])
 	
 	try
 	{
-		CSVFile csv_file;
-		
 		char c = _getch();
 
 		size_t data_size = 0;
 		if (c == '1')
 		{
+			CSVFile csv_file;
 			if (!csv_file.CreateNewFile(FileName))
 				cout << "Ошибка генерации файла\n";
 		}
