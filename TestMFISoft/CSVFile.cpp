@@ -25,7 +25,7 @@ bool CSVFile::OpenFile(const string& name)
 {
 	if (name.empty())
 	{
-		cout << "Не задано имя файла";
+		std::cout << "Не задано имя файла";
 		return false;
 	}
 	else
@@ -34,7 +34,7 @@ bool CSVFile::OpenFile(const string& name)
 		FileCSV.open(name, std::fstream::in | std::fstream::out | std::fstream::app);
 		if (!FileCSV.is_open())
 		{
-			cout << "Не удалось открыть файл";
+			std::cout << "Не удалось открыть файл";
 			return false;
 		}
 	}
@@ -55,10 +55,10 @@ void CSVFile::ReadAll(const string& name, shared_ptr<phone_data> data_maps)
 		file->open(name, std::fstream::in | std::fstream::out | std::fstream::app);
 		if (!file->is_open())
 		{
-			cout << "Не удалось открыть файл по адресу " << name;
+			std::cout << "Не удалось открыть файл по адресу " << name;
 			return;
 		}
-		cout << "Начало чтения файла..." << endl;
+		std::cout << "Начало чтения файла..." << endl;
 
 		// Получим указатель на связанный буферный объект
 		std::filebuf* fbuf = file->rdbuf();
@@ -122,7 +122,7 @@ void CSVFile::ReadAll(const string& name, shared_ptr<phone_data> data_maps)
 
 		auto end = std::chrono::steady_clock::now();
 		auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - begin);
-		cout << "Время чтения файла = " << elapsed_ms.count() << "ms" << EndLineChar;
+		std::cout << "Время чтения файла = " << elapsed_ms.count() << "ms" << EndLineChar;
 		data_maps->IsFileRead.store(true);
 		file->close();
 		}, name
@@ -136,7 +136,7 @@ bool CSVFile::CreateNewFile(const string& file_name)
 	if (!OpenFile(file_name))
 		return false;
 
-	cout << "Начало генерации файла...\n";
+	std::cout << "Начало генерации файла...\n";
 
 	std::random_device rd;
 	std::mt19937 mersenne(rd()); // инициализируем Вихрь Мерсенна случайным стартовым числом 
@@ -185,7 +185,7 @@ bool CSVFile::CreateNewFile(const string& file_name)
 	auto end = std::chrono::steady_clock::now();
 	auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - begin);
 
-	cout << "Время генерации файла = " << elapsed_ms.count() << "ms";
+	std::cout << "Время генерации файла = " << elapsed_ms.count() << "ms";
 
 	return true;
 }
